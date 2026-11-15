@@ -1,483 +1,300 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../utils/api";
 import { backendAPI } from "../utils/backendAPI";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Toast, Button, useToast } from "panelui-native";
+import AppToast from "@/components/custom/Toast";
+
+export type LibraryType = "song" | "artist" | "album" | "playlist";
+
+export type LibraryInput =
+  | string
+  | number
+  | { id: string | number; [key: string]: any };
+
+const CONFIG = {
+  song: {
+    key: ["librarySongs"],
+    path: "song",
+    idField: "songId",
+    label: "Song",
+    detail: (id: string) => `/songs/${id}`,
+  },
+  artist: {
+    key: ["libraryArtists"],
+    path: "artist",
+    idField: "artistId",
+    label: "Artist",
+    detail: (id: string) => `/artists/${id}`,
+  },
+  album: {
+    key: ["libraryAlbums"],
+    path: "album",
+    idField: "albumId",
+    label: "Album",
+    detail: (id: string) => `/albums?id=${id}`,
+  },
+  playlist: {
+    key: ["libraryPlaylists"],
+    path: "playlist",
+    idField: "playlistId",
+    label: "Playlist",
+    detail: (id: string) => `/playlists?id=${id}`,
+  },
+} as const;
+
+const EMPTY: any[] = [];
+
+const authHeaders = async () => {
+  const token = await AsyncStorage.getItem("token");
+  if (!token) throw new Error("No token found");
+  return { Authorization: `Bearer ${token}` };
+};
+
+const idOf = (input: LibraryInput) =>
+  typeof input === "object" && input !== null
+    ? String(input.id)
+    : String(input);
+
+const fetchDetail = async (type: LibraryType, id: string) => {
+  const res = await api.get(CONFIG[type].detail(id));
+  return { type, success: true, id, ...res.data };
+};
+
+const buildEntry = (type: LibraryType, id: string, input: LibraryInput) => {
+  const base = { type, success: true, id };
+  if (typeof input === "object" && input !== null) {
+    return { ...base, data: type === "song" ? [input] : input };
+  }
+  return base;
+};
+
+const useLibraryType = (type: LibraryType) => {
+  const queryClient = useQueryClient();
+  const { showToast } = AppToast();
+
+  const { key, path, idField, label } = CONFIG[type];
+
+  const query = useQuery<any[]>({
+    queryKey: key,
+    staleTime: 1000 * 60 * 2,
+    retry: 1,
+    queryFn: async () => {
+      const headers = await authHeaders();
+      const res = await backendAPI.get(`/library/${path}`, { headers });
+
+      const ids: string[] = (res.data || []).map((entry: any) =>
+        String(entry[idField]),
+      );
+
+      const cached = new Map<string, any>(
+        (queryClient.getQueryData<any[]>(key) ?? [])
+          .filter((entry) => entry?.success && entry?.data)
+          .map((entry) => [String(entry.id), entry]),
+      );
+
+      const results = await Promise.allSettled(
+        ids.map((id) => cached.get(id) ?? fetchDetail(type, id)),
+      );
+
+      return results
+        .filter(
+          (r): r is PromiseFulfilledResult<any> => r.status === "fulfilled",
+        )
+        .map((r) => r.value);
+    },
+  });
+
+  const add = useMutation({
+    mutationFn: async (input: LibraryInput) => {
+      const id = idOf(input);
+      const headers = await authHeaders();
+      await backendAPI.post(
+        `/library/${path}/add`,
+        { [idField]: id },
+        { headers },
+      );
+      return id;
+    },
+
+    onMutate: async (input) => {
+      const id = idOf(input);
+      await queryClient.cancelQueries({ queryKey: key });
+
+      const previous = queryClient.getQueryData<any[]>(key);
+
+      queryClient.setQueryData<any[]>(key, (old = []) =>
+        old.some((entry) => String(entry.id) === id)
+          ? old
+          : [...old, buildEntry(type, id, input)],
+      );
+
+      return { previous };
+    },
+
+    onError: (_err, _input, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(key, context.previous);
+      } else {
+        queryClient.invalidateQueries({ queryKey: key });
+      }
+      showToast({
+        message: `Failed to add ${label.toLowerCase()} to library`,
+        variant: "destructive",
+      });
+    },
+
+    onSuccess: async (id) => {
+      showToast({
+        message: `${label} added to library`,
+        variant: "success",
+      });
+
+      const current = queryClient.getQueryData<any[]>(key) ?? [];
+      const entry = current.find((e) => String(e.id) === id);
+      if (!entry || entry.data) return;
+
+      try {
+        const detail = await fetchDetail(type, id);
+        queryClient.setQueryData<any[]>(key, (old = []) =>
+          old.map((e) => (String(e.id) === id ? detail : e)),
+        );
+      } catch {}
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: async (input: LibraryInput) => {
+      const id = idOf(input);
+      const headers = await authHeaders();
+      await backendAPI.delete(`/library/${path}/remove`, {
+        data: { [idField]: id },
+        headers,
+      });
+      return id;
+    },
+
+    onMutate: async (input) => {
+      const id = idOf(input);
+      await queryClient.cancelQueries({ queryKey: key });
+
+      const previous = queryClient.getQueryData<any[]>(key);
+
+      queryClient.setQueryData<any[]>(key, (old = []) =>
+        old.filter((entry) => String(entry.id) !== id),
+      );
+
+      return { previous };
+    },
+
+    onError: (_err, _input, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(key, context.previous);
+      } else {
+        queryClient.invalidateQueries({ queryKey: key });
+      }
+
+      showToast({
+        message: `Failed to remove ${label.toLowerCase()} from library`,
+        variant: "destructive",
+      });
+    },
+
+    onSuccess: () => {
+      showToast({
+        message: `${label} removed from library`,
+        variant: "success",
+      });
+    },
+  });
+
+  return { query, add, remove };
+};
 
 export const useLibrary = () => {
-  const [token, setToken] = useState<string | null>(null);
-  const { toast } = useToast();
+  const songs = useLibraryType("song");
+  const artists = useLibraryType("artist");
+  const albums = useLibraryType("album");
+  const playlists = useLibraryType("playlist");
 
-  useEffect(() => {
-    AsyncStorage.getItem("token").then(setToken);
-  }, []);
+  const songItems = songs.query.data ?? EMPTY;
+  const artistItems = artists.query.data ?? EMPTY;
+  const albumItems = albums.query.data ?? EMPTY;
+  const playlistItems = playlists.query.data ?? EMPTY;
 
-  const queryClient = useQueryClient();
-
-  // Songs --------------------------------------------------------------------------
-  const {
-    data: songDetails,
-    isPending: isSongDetailsLoading,
-    isError: isSongDetailsError,
-    refetch: refetchSongs,
-  } = useQuery({
-    queryKey: ["librarySongs"],
-    queryFn: async () => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.get("/library/song", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const songIds = res.data || [];
-      const results = await Promise.allSettled(
-        songIds.map(async (song: any) => {
-          const res = await api.get(`/songs/${song.songId}`);
-          return {
-            type: "song",
-            success: true,
-            id: song.songId,
-            ...res.data,
-          };
-        }),
-      );
-      return results
-        .filter((r:any) => r.status === "fulfilled")
-        .map((r:any) => r.value);
-    },
-  });
-
-  const { mutate: addSong, isPending: isAddingSong } = useMutation({
-    mutationFn: async (songId: string) => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.post(
-        "/library/song/add",
-        { songId },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      return res.data;
-    },
-    onMutate: async (songId) => {
-      await queryClient.cancelQueries({ queryKey: ["librarySongs"] });
-      const previous = queryClient.getQueryData(["librarySongs"]);
-      queryClient.setQueryData(["librarySongs"], (old: any) => [
-        ...(old || []),
-        // { type: "song", success: true, id: songId, data: [] },
-      ]);
-
-      return { previous };
-    },
-    onError: (error, songId, context) => {
-      queryClient.setQueryData(["librarySongs"], context?.previous);
-      toast.show("Failed to add song to library");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["librarySongs"] });
-    },
-
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["librarySongs"] });
-      queryClient.refetchQueries({ queryKey: ["librarySongs"] });
-      toast.show("Song added to library");
-    },
-  });
-
-  const { mutate: removeSong, isPending: isRemovingSong } = useMutation({
-    mutationFn: async (songId: string) => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.delete("/library/song/remove", {
-        data: { songId },
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      return res.data;
-    },
-    onMutate: async (songId) => {
-      await queryClient.cancelQueries({ queryKey: ["librarySongs"] });
-      const previous = queryClient.getQueryData(["librarySongs"]);
-
-      queryClient.setQueryData(["librarySongs"], (old: any) =>
-        (old || []).filter((entry: any) => entry.id !== songId),
-      );
-
-      return { previous };
-    },
-    onError: (error, songId, context) => {
-      queryClient.setQueryData(["librarySongs"], context?.previous);
-      toast.show("Failed to remove song from library");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["librarySongs"] });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["librarySongs"] });
-      queryClient.refetchQueries({ queryKey: ["librarySongs"] });
-      toast.show("Song removed from library");
-    },
-  });
-
-  // Artists --------------------------------------------------------------------------
-  const {
-    data: artistDetails,
-    isPending: isArtistDetailsLoading,
-    isError: isArtistDetailsError,
-    refetch: refetchArtists,
-  } = useQuery({
-    queryKey: ["libraryArtists"],
-    queryFn: async () => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.get("/library/artist", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const artistIds = res.data || [];
-      const results = await Promise.allSettled(
-        artistIds.map(async (artist: any) => {
-          const res = await api.get(`/artists/${artist.artistId}`);
-          return {
-            type: "artist",
-            success: true,
-            id: artist.artistId,
-            ...res.data,
-          };
-        }),
-      );
-      return results
-        .filter((r:any) => r.status === "fulfilled")
-        .map((r:any) => r.value);
-    },
-  });
-
-  const { mutate: addArtist, isPending: isAddingArtist } = useMutation({
-    mutationFn: async (artistId: string) => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.post(
-        "/library/artist/add",
-        { artistId },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      return res.data;
-    },
-    onMutate: async (artistId) => {
-      await queryClient.cancelQueries({ queryKey: ["libraryArtists"] });
-      const previous = queryClient.getQueryData(["libraryArtists"]);
-      queryClient.setQueryData(["libraryArtists"], (old: any) => [
-        ...(old || []),
-        { type: "artist", success: true, id: artistId },
-      ]);
-
-      return { previous };
-    },
-    onError: (error, artistId, context) => {
-      queryClient.setQueryData(["libraryArtists"], context?.previous);
-      toast.show("Failed to add artist to library");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryArtists"] });
-    },
-
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryArtists"] });
-      queryClient.refetchQueries({ queryKey: ["libraryArtists"] });
-      toast.show("Artist added to library");
-    },
-  });
-
-  const { mutate: removeArtist, isPending: isRemovingArtist } = useMutation({
-    mutationFn: async (artistId: string) => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.delete("/library/artist/remove", {
-        data: { artistId },
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      return res.data;
-    },
-    onMutate: async (artistId) => {
-      await queryClient.cancelQueries({ queryKey: ["libraryArtists"] });
-      const previous = queryClient.getQueryData(["libraryArtists"]);
-
-      queryClient.setQueryData(["libraryArtists"], (old: any) =>
-        (old || []).filter((entry: any) => entry.id !== artistId),
-      );
-
-      return { previous };
-    },
-    onError: (error, artistId, context) => {
-      queryClient.setQueryData(["libraryArtists"], context?.previous);
-      toast.show("Failed to remove artist from library");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryArtists"] });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryArtists"] });
-      queryClient.refetchQueries({ queryKey: ["libraryArtists"] });
-      toast.show("Artist removed from library");
-    },
-  });
-
-  // Playlist -----------------------------------------------------
-
-  const {
-    data: playlistDetails,
-    isPending: isPlaylistDetailLoading,
-    isError: isPlaylistDetailError,
-    refetch: refetchPlaylists,
-  } = useQuery({
-    queryKey: ["libraryPlaylists"],
-    queryFn: async () => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.get("/library/playlist", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const playlistIds = (res.data || []).map((p: any) => ({
-        type: "playlist",
-        ...p,
-      }));
-      const results = await Promise.allSettled(
-        playlistIds.map(async (playlist: any) => {
-          const res = await api.get(`/playlists?id=${playlist.playlistId}`);
-          return {
-            type: "playlist",
-            success: true,
-            id: playlist.playlistId,
-            ...res.data,
-          };
-        }),
-      );
-      return results
-        .filter((r:any) => r.status === "fulfilled")
-        .map((r:any) => r.value);
-    },
-  });
-
-  const { mutate: addPlaylist, isPending: isAddingPlaylist } = useMutation({
-    mutationFn: async (playlistId: string) => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.post(
-        "/library/playlist/add",
-        { playlistId },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      return res.data;
-    },
-    onMutate: async (playlistId) => {
-      await queryClient.cancelQueries({ queryKey: ["libraryPlaylists"] });
-      const previous = queryClient.getQueryData(["libraryPlaylists"]);
-      queryClient.setQueryData(["libraryPlaylists"], (old: any) => [
-        ...(old || []),
-        { type: "playlist", success: true, id: playlistId },
-      ]);
-
-      return { previous };
-    },
-    onError: (error, playlistId, context) => {
-      queryClient.setQueryData(["libraryPlaylists"], context?.previous);
-      toast.show("Failed to add playlist to library");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryPlaylists"] });
-    },
-
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryPlaylists"] });
-      queryClient.refetchQueries({ queryKey: ["libraryPlaylists"] });
-      toast.show("Playlist added to library");
-    },
-  });
-
-  const { mutate: removePlaylist, isPending: isRemovingPlaylist } = useMutation(
-    {
-      mutationFn: async (playlistId: string) => {
-        if (!token) throw new Error("No token found");
-        const res = await backendAPI.delete("/library/playlist/remove", {
-          data: { playlistId },
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        return res.data;
-      },
-      onMutate: async (playlistId) => {
-        await queryClient.cancelQueries({ queryKey: ["libraryPlaylists"] });
-        const previous = queryClient.getQueryData(["libraryPlaylists"]);
-
-        queryClient.setQueryData(["libraryPlaylists"], (old: any) =>
-          (old || []).filter((entry: any) => entry.id !== playlistId),
-        );
-
-        return { previous };
-      },
-      onError: (_error, _playlistId, context) => {
-        queryClient.setQueryData(["libraryPlaylists"], context?.previous);
-        toast.show("Failed to remove playlist from library");
-      },
-      onSettled: () => {
-        queryClient.invalidateQueries({ queryKey: ["libraryPlaylists"] });
-      },
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ["libraryPlaylists"] });
-        queryClient.refetchQueries({ queryKey: ["libraryPlaylists"] });
-        toast.show("Playlist removed from library");
-      },
-    },
+  const libraryItems = useMemo(
+    () => [...songItems, ...artistItems, ...albumItems, ...playlistItems],
+    [songItems, artistItems, albumItems, playlistItems],
   );
 
-  // Albums ---------------------------------------------------------
+  const idSets = useMemo(
+    () => ({
+      song: new Set(songItems.map((e) => String(e.id))),
+      artist: new Set(artistItems.map((e) => String(e.id))),
+      album: new Set(albumItems.map((e) => String(e.id))),
+      playlist: new Set(playlistItems.map((e) => String(e.id))),
+    }),
+    [songItems, artistItems, albumItems, playlistItems],
+  );
 
-  const {
-    data: albumDetails,
-    isPending: isAlbumDetailLoading,
-    isError: isAlbumDetailError,
-    refetch: refetchAlbums,
-  } = useQuery({
-    queryKey: ["libraryAlbums"],
-    queryFn: async () => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.get("/library/album", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const albumIds = (res.data || []).map((a: any) => ({
-        type: "album",
-        ...a,
-      }));
-      const results = await Promise.allSettled(
-        albumIds.map(async (album: any) => {
-          const res = await api.get(`/albums?id=${album.albumId}`);
-          return {
-            type: "album",
-            success: true,
-            id: album.albumId,
-            ...res.data,
-          };
-        }),
-      );
-      return results
-        .filter((r:any) => r.status === "fulfilled")
-        .map((r:any) => r.value);
-    },
-  });
+  const isInLibrary = useCallback(
+    (type: LibraryType, id?: string | number | null) =>
+      id !== undefined && id !== null && idSets[type].has(String(id)),
+    [idSets],
+  );
 
-  const { mutate: addAlbum, isPending: isAddingAlbum } = useMutation({
-    mutationFn: async (albumId: string) => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.post(
-        "/library/album/add",
-        { albumId },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      return res.data;
-    },
-    onMutate: async (albumId) => {
-      await queryClient.cancelQueries({ queryKey: ["libraryAlbums"] });
-      const previous = queryClient.getQueryData(["libraryAlbums"]);
-      queryClient.setQueryData(["libraryAlbums"], (old: any) => [
-        ...(old || []),
-        { type: "album", success: true, id: albumId },
-      ]);
-
-      return { previous };
-    },
-    onError: (error, albumId, context) => {
-      queryClient.setQueryData(["libraryAlbums"], context?.previous);
-      toast.show("Failed to add album to library");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryAlbums"] });
-    },
-
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryAlbums"] });
-      queryClient.refetchQueries({ queryKey: ["libraryAlbums"] });
-      toast.show("Album added to library");
-    },
-  });
-
-  const { mutate: removeAlbum, isPending: isRemovingAlbum } = useMutation({
-    mutationFn: async (albumId: string) => {
-      if (!token) throw new Error("No token found");
-      const res = await backendAPI.delete("/library/album/remove", {
-        data: { albumId },
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      return res.data;
-    },
-    onMutate: async (albumId) => {
-      await queryClient.cancelQueries({ queryKey: ["libraryAlbums"] });
-      const previous = queryClient.getQueryData(["libraryAlbums"]);
-
-      queryClient.setQueryData(["libraryAlbums"], (old: any) =>
-        (old || []).filter((entry: any) => entry.id !== albumId),
-      );
-
-      return { previous };
-    },
-    onError: (_error, _albumId, context) => {
-      queryClient.setQueryData(["libraryAlbums"], context?.previous);
-      toast.show("Failed to remove album from library");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryAlbums"] });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["libraryAlbums"] });
-      queryClient.refetchQueries({ queryKey: ["libraryAlbums"] });
-      toast.show("Album removed from library");
-    },
-  });
-
-  // ========== Combine All ==========
-  const libraryItems = useMemo(() => {
-    return [
-      ...(songDetails || []),
-      ...(artistDetails || []),
-      ...(albumDetails || []),
-      ...(playlistDetails || []),
-    ];
-  }, [songDetails, artistDetails, playlistDetails, albumDetails]);
-
-  // ========== Unified Loading/Error ==========
   const isLoading =
-    isArtistDetailsLoading ||
-    isPlaylistDetailLoading ||
-    isAlbumDetailLoading ||
-    isSongDetailsLoading;
+    songs.query.isPending ||
+    artists.query.isPending ||
+    albums.query.isPending ||
+    playlists.query.isPending;
 
   const isError =
-    isArtistDetailsError ||
-    isPlaylistDetailError ||
-    isAlbumDetailError ||
-    isSongDetailsError;
+    songs.query.isError ||
+    artists.query.isError ||
+    albums.query.isError ||
+    playlists.query.isError;
 
-  // ========== Unified Refetch ==========
   const refetch = async () => {
     await Promise.all([
-      refetchArtists(),
-      refetchPlaylists(),
-      refetchAlbums(),
-      refetchSongs,
+      songs.query.refetch(),
+      artists.query.refetch(),
+      albums.query.refetch(),
+      playlists.query.refetch(),
     ]);
   };
 
   return {
     libraryItems,
+    likedSongIds: idSets.song,
+    isInLibrary,
     isLoading,
     isError,
     refetch,
-    isArtistDetailsLoading,
-    isPlaylistDetailLoading,
-    isAlbumDetailLoading,
-    isSongDetailsLoading,
-    addSong,
-    removeSong,
-    isAddingSong,
-    isRemovingSong,
-    addArtist,
-    removeArtist,
-    isAddingArtist,
-    isRemovingArtist,
-    addPlaylist,
-    removePlaylist,
-    isAddingPlaylist,
-    isRemovingPlaylist,
-    addAlbum,
-    removeAlbum,
-    isAddingAlbum,
-    isRemovingAlbum,
+
+    isSongDetailsLoading: songs.query.isPending,
+    isArtistDetailsLoading: artists.query.isPending,
+    isAlbumDetailLoading: albums.query.isPending,
+    isPlaylistDetailLoading: playlists.query.isPending,
+
+    addSong: songs.add.mutate,
+    removeSong: songs.remove.mutate,
+    isAddingSong: songs.add.isPending,
+    isRemovingSong: songs.remove.isPending,
+
+    addArtist: artists.add.mutate,
+    removeArtist: artists.remove.mutate,
+    isAddingArtist: artists.add.isPending,
+    isRemovingArtist: artists.remove.isPending,
+
+    addAlbum: albums.add.mutate,
+    removeAlbum: albums.remove.mutate,
+    isAddingAlbum: albums.add.isPending,
+    isRemovingAlbum: albums.remove.isPending,
+
+    addPlaylist: playlists.add.mutate,
+    removePlaylist: playlists.remove.mutate,
+    isAddingPlaylist: playlists.add.isPending,
+    isRemovingPlaylist: playlists.remove.isPending,
   };
 };

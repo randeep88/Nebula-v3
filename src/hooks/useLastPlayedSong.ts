@@ -1,7 +1,8 @@
-import { backendAPI } from "@/utils/backendAPI";
+
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { backendAPI } from "../utils/backendAPI";
 
 const useLastPlayedSong = () => {
   const [token, setToken] = useState<string | null>(null);

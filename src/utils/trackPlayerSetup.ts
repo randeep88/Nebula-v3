@@ -1,36 +1,29 @@
-import TrackPlayer, {
-  AppKilledPlaybackBehavior,
-  Capability,
-} from "react-native-track-player";
+import TrackPlayer, { PlayerCommand } from "@rntp/player";
 
 let ready: Promise<void> | null = null;
 
 export const ensurePlayerReady = () => {
   if (!ready) {
     ready = (async () => {
-      try {
-        await TrackPlayer.setupPlayer({ autoHandleInterruptions: true });
-      } catch {}
-      await TrackPlayer.updateOptions({
+      await TrackPlayer.setupPlayer({
+        contentType: "music",
+        handleAudioBecomingNoisy: true,
         android: {
-          appKilledPlaybackBehavior:
-            AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
+          taskRemovedBehavior: "stop",
         },
+      });
+
+      TrackPlayer.setCommands({
         capabilities: [
-          Capability.Play,
-          Capability.Pause,
-          Capability.SkipToNext,
-          Capability.SkipToPrevious,
-          Capability.SeekTo,
-          Capability.Stop,
-        ],
-        compactCapabilities: [
-          Capability.Play,
-          Capability.Pause,
-          Capability.SkipToNext,
+          PlayerCommand.PlayPause,
+          PlayerCommand.Next,
+          PlayerCommand.Previous,
+          PlayerCommand.Seek,
+          PlayerCommand.Stop,
         ],
       });
     })();
   }
+
   return ready;
 };

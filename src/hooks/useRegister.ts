@@ -1,11 +1,11 @@
 import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { backendAPI } from "../utils/backendAPI";
-import { useToast } from "panelui-native";
+import AppToast from "@/components/custom/Toast";
 
 export const useRegister = () => {
   const router = useRouter();
-  const {toast} = useToast();
+  const { showToast } = AppToast();
 
   const { mutate: registerMutate, isPending } = useMutation({
     mutationFn: async (data: any) => {
@@ -18,13 +18,19 @@ export const useRegister = () => {
     },
 
     onSuccess: async () => {
-      toast.show("Registration successful! Please login.");
+      showToast({
+        message: "Registration successful! Please login.",
+        variant: "success",
+      });
       router.push("/(auth)/login");
     },
 
     onError: (err) => {
       console.error("Registration error:", err);
-      toast.show("Registration failed. Please try again.");
+      showToast({
+        message: "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
     },
   });
 

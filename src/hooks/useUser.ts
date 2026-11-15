@@ -1,10 +1,11 @@
-
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect } from "react";
 import { backendAPI } from "../utils/backendAPI";
 import { useAuthStore } from "../store/useAuthStore";
+import { useNetworkStatus } from "./useNetworkStatus";
 
 const useUser = () => {
+  const { isOffline } = useNetworkStatus();
   const queryClient = useQueryClient();
 
   const token = useAuthStore((s) => s.token);
@@ -17,6 +18,7 @@ const useUser = () => {
     isPending: isUserPending,
     isError,
     error,
+    isFetching,
     refetch: refetchUser,
   } = useQuery({
     queryKey: ["user", token],
@@ -26,7 +28,7 @@ const useUser = () => {
       });
       return res.data;
     },
-    enabled: !!token,
+    enabled: !!token && !isOffline,
     retry: 2,
     staleTime: Infinity,
   });
@@ -50,13 +52,14 @@ const useUser = () => {
     }
   }, [token, isError, error, logout]);
 
-  const isAuthenticated = !!token && !!user?._id;
+  const isAuthenticated = !!token && (!!user?._id || isOffline);
 
-  const isLoading = isTokenLoading || (!!token && isUserPending);
+  const isLoading = isTokenLoading || (!!token && isUserPending && !isOffline);
 
   return {
     user,
     isLoading,
+    isFetching,
     isAuthenticated,
     refetchUser,
     token,

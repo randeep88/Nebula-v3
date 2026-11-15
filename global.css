@@ -1,8 +1,32 @@
-@import 'tailwindcss';
-@import 'uniwind';
-@import 'panelui-native/theme.css';
+@import "tailwindcss";
+@import "uniwind";
+@import "panelui-native/theme.css";
 
-/* Tailwind only generates the classes it can see, and the components live in
-   the package rather than in this project — without this line every one of
-   them renders unstyled, which reads like a broken install. */
 @source './node_modules/panelui-native/src';
+
+@theme {
+  --font-thin: SpotifyMixThin;
+  --font-normal: SpotifyMixRegular;
+  --font-medium: SpotifyMixMedium;
+  --font-semibold: SpotifyMixBold;
+  --font-bold: SpotifyMixExtraBold;
+  --font-black: SpotifyMixBlack;
+  --font-ultra: SpotifyMixUltra;
+}
+
+Text {
+  font-family: SpotifyMixRegular;
+}
+
+@layer theme {
+  :root {
+    @variant light {
+      --color-primary: #3d73a7;
+      --color-primary-foreground: #ffffff;
+    }
+    @variant dark {
+      --color-primary: #007BFD;
+      --color-primary-foreground: #ffffff;
+    }
+  }
+}

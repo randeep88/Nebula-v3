@@ -1,23 +1,53 @@
 {
   "expo": {
-    "name": "my-app",
-    "slug": "my-app",
+    "name": "Nebula",
+    "slug": "nebula",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "myapp",
-    "userInterfaceStyle": "automatic",
+    "scheme": "nebula",
+    "userInterfaceStyle": "dark",
+    "icon": "./assets/images/nebula-icon.png",
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "package": "com.randeep88.myapp"
+      "package": "com.randeepssr.myapp",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/nebula-icon.png",
+        "backgroundColor": "#131314"
+      },
+      "permissions": ["android.permission.RECORD_AUDIO"]
     },
     "web": {
       "bundler": "metro",
       "output": "static"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you edit your profile.",
+          "colors": {
+            "cropToolbarColor": "#000000"
+          },
+          "dark": {
+            "colors": {
+              "cropToolbarColor": "#000000"
+            }
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#131314",
+          "image": "./assets/images/logo-new.png",
+          "imageWidth": 180
+        }
+      ],
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true
@@ -29,8 +59,9 @@
         }
       },
       "eas": {
-        "projectId": "179b8b7a-550e-4658-b513-1eb42bce14b4"
+        "projectId": "ca0042b3-017e-4bb4-83e7-c42ee7fe0c02"
       }
-    }
+    },
+    "owner": "randeepssr"
   }
 }

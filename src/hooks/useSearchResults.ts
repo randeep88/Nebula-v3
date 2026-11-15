@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../utils/api";
 
 export const useSearchResults = (searchQuery: string) => {
-  const {data, isPending} =  useQuery({
+  const {data, isPending, isFetching} =  useQuery({
     queryKey: ["search-results", searchQuery],
     queryFn: async () => {
       const [songsRes, albumsRes, playlistsRes] = await Promise.all([
@@ -32,5 +32,5 @@ export const useSearchResults = (searchQuery: string) => {
     enabled: !!searchQuery,
   });
 
-  return {data, isPending}
+  return {data, isPending, isFetching}
 };
