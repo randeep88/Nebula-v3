@@ -75,6 +75,8 @@ Follow the Expo CLI instructions to run the application on your device or emulat
 
 https://github.com/randeep88/Nebula-v3/releases/download/v3/Nebula-v3.apk
 
+Here is Web version: https://nebula-music.netlify.app
+
 ## 🎯 Why Nebula?
 
 I initially started this project for myself because I wanted a music experience that didn't require a paid subscription.
